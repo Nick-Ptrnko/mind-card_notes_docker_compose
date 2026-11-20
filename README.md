@@ -1,25 +1,79 @@
-# Mind Card Notes Web
+# Mind Card Notes
 
-A personal log of mental cards designed to recreate the original **Zettelkasten** philosophy, which often gets lost when managing complex knowledge bases in tools like Obsidian. Each mental card is meant to be compact and contain a single idea that can be recalled from memory at the moment of creation. When returning to a card later, its content should be easy to remember—or, if forgotten, easy to reconstruct.
+Application code, features and stack: see the template repository: https://github.com/Nick-Ptrnko/mind-card_notes.git
 
-Beyond its practical utility for taking notes and accessing them from any device via **WireGuard VPN**, this application was built specifically as a hands-on project for practicing Python development.
+Docker Compose deployment: MySQL 9.7 + the web application. How to deploy: [INSTRUCTION.md](INSTRUCTION.md). This file describes the deployed application and how to use it.
 
----
+## The ./db folder
 
-## 🛠 Tech Stack & Architecture
+Everything about the database that is not application code:
 
-* **FastAPI:** Powers the web backend, routing, and form handling.
-* **Jinja2:** Renders dynamic HTML templates on the server side.
-* **MySQL & PyMySQL:** Used as the relational database layer. `PyMySQL` was intentionally chosen instead of an ORM to explore and practice how databases work directly through raw SQL queries (without an abstraction layer).
-* **Environment Configuration (`.env`):** Sensitive credentials and database connection parameters are isolated in a `.env` file.
-* **File System & `os` Module Practice:** The description text displayed on the main page is stored in `bio.txt`, and the JSON database backup/restore system is file-based—both implemented specifically to study and practice file operations and the Python `os` module.
+```
+db/
+├── init/              # one-time scripts, run only when the MySQL volume is empty
+│   └── 01-test-db.sh  # creates the test database and grants rights
+├── scripts-backup/    # maintenance scripts, run by hand
+│   ├── backup.sh      # database -> db/backups/*.sql.gz
+│   └── restore.sh     # dump -> database
+└── backups/           # dumps; keep them out of git and out of the image
+```
 
----
+Add `db/backups/*` to .gitignore and `db/` to .dockerignore.
 
-## ✨ Features
+## Default names
+If `container_name:`, `image:` and the volume `name:` are absent, Compose builds names from the project folder (here mind-card_notes_docker_compose) and the service name:
 
-* **Live Preview and Markdown:** The `marked.js` library is used for instant conversion of Markdown markup into HTML right while typing, as well as `highlight.js` for syntax highlighting of program code.
-* **Custom Syntax Extensions:**
-  * Autocomplete and internal linking between notes are implemented using double square bracket syntax (`[[Note Title]]`).
-  * Added support for highlighting text with markers (`==text==`).
-* **Responsiveness and UX:** The interface supports a dark theme, live search of notes by title "on the fly", grouping of notes by creation dates, and convenient editing of the profile description (`bio.txt`).
+| What | Generated name |
+|------|----------------|
+| Application container | mind-card_notes_docker_compose-app-1 |
+| Database container | mind-card_notes_docker_compose-mind_card_db-1 |
+| Application image | mind-card_notes_docker_compose-app:latest |
+| Volume | mind-card_notes_docker_compose_db_data |
+| Network | mind-card_notes_docker_compose_default |
+
+Such names depend on the folder name: rename the folder and you get new names, including a new empty volume.
+
+## Everyday commands
+
+```bash
+docker compose ps                  # status
+docker compose logs -f app         # application logs
+docker compose restart app         # restart the application
+docker compose up -d --build       # rebuild and start after code changes
+docker compose down                # stop; the data stays in the volume
+```
+
+Never add `-v` to `down`: it deletes the volume with all notes.
+
+## Backup and restore
+
+```bash
+./db/scripts-backup/backup.sh              # dump to db/backups/
+./db/scripts-backup/restore.sh             # restore the newest dump (asks first)
+./db/scripts-backup/restore.sh db/backups/FILE.sql.gz   # restore a chosen dump
+```
+
+The "Backup" and "Restore" buttons in the web UI use a separate JSON file, data/mind_card_backup.json. It is appended to on every backup.
+
+## Working with Cyrillic in the database
+
+```bash
+docker exec -it mind_card_db mysql -uroot -p --default-character-set=utf8mb4 mind_card_notes
+```
+
+Without the flag the client prints `???` (the data itself is fine). Inside an open session:
+
+```sql
+SET NAMES utf8mb4;
+SELECT id, title FROM notes;
+SELECT id, HEX(title) FROM notes LIMIT 3;   -- D0../D1.. = valid UTF-8
+```
+
+Never INSERT or UPDATE Cyrillic in a session without the flag: real `?` would be stored.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+DB_HOST=127.0.0.1 pytest      # port 3306 is open on 127.0.0.1 only; cleans only mind_card_notes_test
+```

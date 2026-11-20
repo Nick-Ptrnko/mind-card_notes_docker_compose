@@ -1,121 +1,77 @@
-# Deployment Instructions
+# Instruction: deployment with Docker Compose
 
-This guide covers two ways to deploy and run **Mind Card Notes**:
-1. [Local Deployment in `.venv` (Linux)](#1-local-deployment-in-venv-linux)
-2. [Docker Deployment](#2-docker-deployment)
+## 1. Prepare the files
 
----
+```
+chmod +x db/scripts-backup/*.sh
+chmod +x db/init/*.sh
+```
 
-## 1. Local Deployment in `.venv` (Linux)
+Copy .env into work dir.
 
-Follow these steps to run the application directly on a Linux host using a Python virtual environment.
-
-### Step 1.1: Create and Activate a Virtual Environment
-
-Navigate to the project root directory and create a virtual environment named `.venv`:
+## 2. Does the data volume already exist?
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+docker volume ls
 ```
 
-### Step 1.2: Install Dependencies
+**No, it does not (default).** Leave docker-compose.yml as it is. On the first start Compose creates the volume, MySQL creates the main database and the user from .env, and db/init/01-test-db.sh creates the test database.
 
-Install the required packages from `requirements.txt`:
+**Yes, it does.** In docker-compose.yml, in the `volumes:` block, comment out variant A and uncomment variant B. Then:
+
+- MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD and db/init are ignored; the credentials stored in the volume apply.
+- DB_ROOT_PASSWORD in .env must match the root password stored in the volume.
+- The volume must contain data of the same MySQL version (9.7). For data from another server, make a dump there and restore it into a new volume:
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+CONTAINER=OLD_CONTAINER_NAME ./db/scripts-backup/backup.sh    # on the old server
+./db/scripts-backup/restore.sh                                # after step 4, on the new one
 ```
 
-### Step 1.3: Configure Environment Variables
+## 3. Stop the old containers
 
-Create or update your `.env` file in the root directory with your local MySQL credentials:
-
-```env
-DB_HOST=127.0.0.1
-DB_USER=your_mysql_user
-DB_PASSWORD=your_mysql_password
-DB_NAME=your_database_name
-```
-
-### Step 1.4: Start the FastAPI Application
-
-Launch the development server bound to your WireGuard VPN interface IP:
+Containers have fixed names and the application takes host port 80, so stop and remove any old stack that uses them. Never run two MySQL servers on one volume.
 
 ```bash
-fastapi dev main.py --host 10.0.0.1
+docker stop OLD_CONTAINER_NAME
+docker rm OLD_CONTAINER_NAME
 ```
 
-> **Note:** `10.0.0.1` is the server's IP address within the **WireGuard VPN** network, allowing you to securely access your notes from any connected device at `http://10.0.0.1:8000`.
+Removing a container does not delete its volume.
 
----
-
-## 2. Docker Deployment
-
-This section explains how to build the Docker image for **Mind Card Notes**, configure your host's local MySQL server to accept connections from the container, and launch the application.
-
-### Step 2.1: Build the Docker Image
-
-Run the following command in the root directory of the project (where the `Dockerfile` is located) to build the image:
+## 4. Run
 
 ```bash
-docker build -t mind-card_notes .
+docker compose up -d --build
+docker compose ps
+docker compose logs -f app
 ```
 
-### Step 2.2: Configure Local MySQL for Docker Access
+The first start on a new volume takes longer. Open http://10.0.0.1 (or the address from APP_BIND_IP).
 
-Since the application runs inside a Docker container and connects to a MySQL database hosted directly on your machine, you need to ensure MySQL listens to connections from the Docker network interface.
-
-1. **Check Your Host's Docker IP Address:**
-   Find the IP address assigned to the `docker0` network interface on your host machine:
-   ```bash
-   ip a | grep docker
-   ```
-   *(Typically, this IP address is `172.17.0.1`.)*
-
-2. **Check Current MySQL `bind-address`:**
-   Verify which IP addresses your local MySQL server is currently listening on:
-   ```bash
-   mysql -u mysqluser -p -e "SHOW VARIABLES LIKE 'bind_address';"
-   ```
-
-3. **Update MySQL Configuration:**
-   If `bind_address` is set to `127.0.0.1`, the container will not be able to reach the database. Open the MySQL configuration file:
-   ```bash
-   sudo nano /etc/mysql/mysql.conf.d/mysqld.cnf
-   ```
-   Locate the `[mysqld]` section and set `bind-address` to `0.0.0.0` (to listen on all interfaces) or specifically to your Docker bridge IP:
-   ```ini
-   [mysqld]
-   bind-address = 0.0.0.0
-   ```
-   Save the file and restart the MySQL service to apply the changes:
-   ```bash
-   sudo systemctl restart mysql
-   ```
-
-### Step 2.3: Configure Environment Variables for Docker
-
-Update your `.env` file so the containerized application knows where to find the MySQL database on the host machine. Set `DB_HOST` to the Docker network IP found in **Step 2.2**:
-
-```env
-DB_HOST=172.17.0.1
-DB_USER=your_mysql_user
-DB_PASSWORD=your_mysql_password
-DB_NAME=your_database_name
-```
-
-### Step 2.4: Run the Docker Container
-
-Start the container in detached mode (`-d`), mapping port `8000` and passing your `.env` file:
+## 5. Check the databases
 
 ```bash
-docker run -d \
-  -p 8000:8000 \
-  --env-file .env \
-  --name mind-notes-app \
-  mind-card_notes:latest
+docker exec -it mind_card_db mysql -uroot -p --default-character-set=utf8mb4 -e "SHOW DATABASES;"
 ```
 
-Once started, the web application will be accessible at `http://localhost:8000` (or via your WireGuard VPN IP).
+The main database and mind_card_notes_test must be listed. If the test database is missing (the volume was created without the init script):
+
+```bash
+docker exec -it mind_card_db mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS mind_card_notes_test CHARACTER SET utf8mb4; GRANT ALL ON mind_card_notes_test.* TO 'YOUR_DB_USER'@'%';"
+```
+
+## 6. Update
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+For a new release set APP_VERSION (for example 1.5) in .env first.
+
+## 7. Connecting to mySQL from .venv
+
+```
+DB_HOST=127.0.0.1 pytest
+```

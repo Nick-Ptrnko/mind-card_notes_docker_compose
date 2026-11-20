@@ -5,3 +5,5 @@ __pycache__/
 .vscode/
 mind_card_backup.json
 #bio.txt
+db/backups/*
+!db/backups/.gitkeep

@@ -17,3 +17,14 @@ README.md
 
 # Тести
 tests/
+
+# База даних і скрипти (не потрібні образу застосунку)
+db/
+
+# Дані застосунку (монтуються томом)
+data/
+
+# Файли Compose та документація
+docker-compose*.yml
+INSTRUCTION.md
+CHANGELOG.md
